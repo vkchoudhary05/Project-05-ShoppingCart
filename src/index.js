@@ -3,7 +3,7 @@ const bodyParser = require('body-Parser');
 const mongoose = require('mongoose');
 const multer = require('multer')
 
-const route = require('./routers/routes.js')
+const route = require('./routes/routes')
 
 const app = express();
 
@@ -19,8 +19,8 @@ mongoose.connect("mongodb+srv://new-user_2020:Vivek2020@cluster0.lxwkw.mongodb.n
 
 app.use('/', route);
 
-app.listen(process.env.PORT || 3000, function (){
-    console.log('Express app running on port: ' + (process.env.PORT || 3000))
+app.listen(process.env.PORT || 5000, function (){
+    console.log('Express app running on port: ' + (process.env.PORT || 5000))
 });
 
 

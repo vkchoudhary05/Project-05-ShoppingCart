@@ -1,8 +1,11 @@
 const mongoose = require('mongoose')
-const uploadFile = require('./awsControllers')
-const productModel = require('../models/productModel')
-const {isFileImage, isValid} = require('../validation/validation')
 
+const uploadFile = require("./awsControllers")
+const productModel = require('../models/productModel')
+const {printError, isFileImage, isValid} = require("../validation/validation")
+
+
+//Creat Product API Handler Function
 const createProduct = async (req, res) => {
     try{
         let data = JSON.parse(JSON.stringify(req.body))
@@ -12,6 +15,11 @@ const createProduct = async (req, res) => {
         if(!Object.keys(data).length)
             return res.status(400).send({status: false, message: "Enter data to create User."})
 
+        let findTitle = await productModel.findOne({title: data.title, isDeleted: false})
+
+        //Title uniqueness check
+        if(findTitle)
+            error.push('Title must be unique')
         //check for title
         if(!isValid(data.title)) error.push('Title is required')
         //check for description
@@ -50,10 +58,10 @@ const createProduct = async (req, res) => {
                 error.push('Size can only be from: S, XS, M, X, L, XXL, XL')
         }
 
-        if(error.length == 1)
-            return res.status(400).send({status: false, message: error.toString()})
-        else if(error.length > 1)
-            return res.status(400).send({status: false, message: error})
+        if(isValid(data.installments) && !Number.isInteger(Number(data.installments)))
+            error.push('Installment can only be a Integer.')    
+
+        if(printError(error)) return res.status(400).send({status: false, message: printError(error)})//Printing all Bad request Errors
 
         data.availableSizes = [...new Set(data.availableSizes)]
         data.productImage = await uploadFile(req.files[0])//getting aws link for the uploaded file after stroing it in aws s3
@@ -66,36 +74,31 @@ const createProduct = async (req, res) => {
 }
 
 
+//Get Products data API Handler Function
 const getProducts = async(req, res) => {
     try{
-        let filters = req.query
-        let options, newFilter = {title: filters.name}
+        let filters = req.query, products, options, options2, newFilter = {} //'options' is for size & 'options2' is for name
 
-        if(isValid(filters.size))
-            options = filters.size.split(/[, '"+-;]+/).map(x => {return x.trim() && {availableSizes:x}})
-        
+        if(isValid(filters.size) || isValid(filters.name)){
+            options = filters.size?.split(/[, '"+-;]+/).filter(x=>x.trim()).map(x => {return x.trim() && {availableSizes:x}})
+            options2 = filters.name?.split(/[, '"+;]+/).filter(x=>x.trim()).map(x => {return x.trim() && {title:{$regex: new RegExp(x, 'gi')}}})
+            if(!options?.length) options = [{}]
+            if(!options2?.length) options2 = [{}]
+        }
+
         if(isValid(filters.priceGreaterThan)) newFilter.price = {$gt: filters.priceGreaterThan}
         if(isValid(filters.priceLessThan)) newFilter.price = {$lt: filters.priceLessThan}
         if(isValid(filters.priceLessThan) && isValid(filters.priceGreaterThan)) 
             newFilter.price = { $gt: filters.priceGreaterThan, $lt: filters.priceLessThan }
-
-        Object.keys(newFilter).forEach(key => !isValid(newFilter[key]) && delete newFilter[key])
-
+        
         if (isValid(filters.priceSort) && !(filters.priceSort == -1 || filters.priceSort == 1))
             return res.status(400).send({ status: false, message: "You Can Only Use 1 For Ascending And -1 For Descending Sorting" })
         
-        if(!Object.keys(newFilter).length && !options?.length){
-            let products = await productModel.find({isDeleted: false},{__v: 0}).sort({price: filters.priceSort})
-            if(!products.length)
-                return res.status(404).send({ status: false, message: "Product not found." })
-            res.status(200).send({status: true, message: "Product data fetched.", data: products})
-        }
-        else{
-            let products = await productModel.find({$and: [newFilter, {$or:options}, {isDeleted: false}]},{__v: 0}).sort({price: filters.priceSort})
-            if(!products.length)
-                return res.status(404).send({ status: false, message: "Product not found." })
-            res.status(200).send({status: true, message: "Product data fetched.", data: products})
-        }
+        products = await productModel.find({$and: [newFilter,{$or:options||[{}]},{$or:options2||[{}]}, {isDeleted: false}]},{__v: 0}).collation({ locale: "en", strength: 2 }).sort({price: filters.priceSort})
+
+        if(!products.length)
+            return res.status(404).send({ status: false, message: "No products found." })
+        res.status(200).send({status: true, message: "Product data fetched.", data: products})
 
     }catch(err){
         res.status(500).send({status: false, message: err.message})
@@ -103,12 +106,13 @@ const getProducts = async(req, res) => {
 }
 
 
+//Get Product By Id API Handler Function
 const getProduct = async (req, res) => {
     try{
         let pId = req.params.productId
 
         if(!mongoose.isValidObjectId(pId))
-            return res.status(401).send({status: false, message: `'${pId}' is an Invalid ProductId.`})
+            return res.status(400).send({status: false, message: `'${pId}' is an Invalid ProductId.`})
 
         let product = await productModel.findById(pId)
 
@@ -123,6 +127,7 @@ const getProduct = async (req, res) => {
 }
 
 
+//Update Product By Id API Handler Function
 const updateProduct = async (req, res) => {
     try{
         let pId = req.params.productId
@@ -132,13 +137,13 @@ const updateProduct = async (req, res) => {
         let error = []
 
         if(!mongoose.isValidObjectId(pId))
-            return res.status(401).send({status: false, message: `'${pId}' is an Invalid ProductId.`})
+            return res.status(400).send({status: false, message: `'${pId}' is an Invalid ProductId.`})
 
         let findProduct = await productModel.findOne({_id: pId, isDeleted: false})
         if(!findProduct)
             return res.status(404).send({status: false, message: `No product found for: '${pId}'`})
         
-        if(!Object.keys(data).length)
+        if(!req.files.length && !Object.keys(data).length)
             return res.status(400).send({status: false, message: "Can't update product without data."})
 
         if(isValid(data.availableSizes)){
@@ -158,13 +163,16 @@ const updateProduct = async (req, res) => {
 
         if(isValid(data.price) && isNaN(data.price)) error.push('Price should be an Integer')
 
-        if(error.length == 1)
-            return res.status(400).send({status: false, message: error.toString()})
-        else if(error.length > 1)
-            return res.status(400).send({status: false, message: error})
+        //check if currencyId is 'INR' Only
+        if(isValid(data.currencyId) && data.currencyId != 'INR') error.push("CurrencyId can only be 'INR'")
+        //check if currencyFormat is '₹' Only
+        if(isValid(data.currencyFormat) && data.currencyFormat != '₹') error.push("currencyFormat can only be '₹'")
 
-        data['$addToSet'] = {availableSizes: {$each:data.availableSizes||[]}}
-        delete data.availableSizes
+        if(printError(error)) return res.status(400).send({status: false, message: printError(error)})//Printing all Bad request Errors
+
+        // data['$addToSet'] = {availableSizes: {$each:data.availableSizes||[]}}
+        // delete data.availableSizes
+        data.availableSizes = [...new Set(data.availableSizes)]
         let updatedProduct = await productModel.findOneAndUpdate({_id:pId},data,{new:true})
         res.status(200).send({status: true, message: 'successfully updated', data: updatedProduct})
 
@@ -174,23 +182,25 @@ const updateProduct = async (req, res) => {
 }
 
 
+//Delete Product By Id API Handler Function
 const deleteProduct = async (req, res) => {
     try{
         let pId = req.params.productId
 
         if(!mongoose.isValidObjectId(pId))
-            return res.status(401).send({status: false, message: `'${pId}' is an Invalid ProductId.`})
+            return res.status(400).send({status: false, message: `'${pId}' is an Invalid ProductId.`})
 
         let deletedProduct = await productModel.findOneAndUpdate({_id: pId, isDeleted: false},{isDeleted: true, deletedAt: Date.now()},{new: true})
 
         if(!deletedProduct)
-            return res.status(404).send({ status: false, message: "Product not found." })
+            return res.status(404).send({ status: false, message: "Product not found/Already deleted." })
 
-        res.status(200).send({status: true, message: "Product deleted successfully.", data: deletedProduct})
+        res.status(200).send({status: true, message: "Product deleted successfully."})
 
     }catch(err){
         res.status(500).send({status: false, message: err.message})
     }
 }
+
 
 module.exports = {createProduct, getProducts, getProduct, updateProduct, deleteProduct}

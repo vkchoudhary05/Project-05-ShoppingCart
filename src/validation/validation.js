@@ -9,6 +9,12 @@ const reg = {
 }
 /**********************************************************************************/
 
+//Print Error function
+const printError = error => {
+    if(error.length == 1) return error.toString()
+    else if(error.length > 1) return error
+}
+
 //Name Formator
 const formatName = (data) => {
     if(typeof data === 'string')
@@ -28,7 +34,7 @@ const formatName = (data) => {
 
 //Image file Validation
 const isFileImage = (file) => {
-    let ext = ['png', 'jpg', 'jpeg']
+    let ext = ['png', 'jpg', 'jpeg', 'jfif', 'pjpeg', 'pjp', 'webp']
     let fileExt = file.originalname.split('.')
     return ext.includes(fileExt[fileExt.length-1])
 }
@@ -58,4 +64,14 @@ const isValid = (value) => {
     return true;
 }
 
-module.exports = {formatName, isFileImage, validRegEx, checkPinCode, isValid}
+//check if a string is JSON or not (Not used in this project)
+const isJSON = (str) => {
+    try {
+        if(!isNaN(str)) return false //in case 'str' is a number then it'll return 'false'
+        return (JSON.parse(str) && !!str);
+    } catch (e) {
+        return false;
+    }
+}
+
+module.exports = {printError, formatName, isFileImage, validRegEx, checkPinCode, isValid, isJSON}

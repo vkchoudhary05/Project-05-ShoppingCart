@@ -2,17 +2,21 @@ const mongoose = require('mongoose')
 const bcrypt = require('bcrypt')
 const saltRounds = 10
 
-const uploadFile = require('./awsControllers')
+const uploadFile = require("./awsControllers")
 const {userModel, passwordModel} = require("../models/userModel")
-const {formatName, isFileImage, validRegEx, checkPinCode, isValid} = require('../validation/validation')
+const {printError, formatName, isFileImage, validRegEx, checkPinCode, isValid, isJSON} = require("../validation/validation")
 
 
-//Create User API Handler
+//Create User API Handler Function
 const createUser = async (req, res) => {
     try{
         let tempPass = req.body.password
         let data = JSON.parse(JSON.stringify(req.body))
         let error = []
+
+        if(typeof data.address == 'string' && !isJSON(data.address))
+            return res.status(400).send({status: false, message: "Please send a valid JSON data for address."})
+
         let findEmail = await userModel.findOne({email: data.email})
         let findPhone = await userModel.findOne({phone: data.phone})
 
@@ -67,7 +71,8 @@ const createUser = async (req, res) => {
 
         //address checking and street, city, picode required check
         if(isValid(data.address)){
-            data.address = JSON.parse(data.address)
+            if(typeof data.address == 'string')
+                data.address = JSON.parse(data.address)
             if(!isValid(data.address.shipping) || !isValid(data.address.billing))
                 error.push('Both Shipping & Billing Address are required')
             if(!isValid(data.address.shipping.street) || !isValid(data.address.shipping.city) || !isValid(data.address.shipping.pincode))
@@ -86,18 +91,14 @@ const createUser = async (req, res) => {
             if(checkPinBilling != 'OK') error.push(`Billing Pincode: ${checkPinBilling}`)
         }
 
-        if(error.length == 1)
-            return res.status(400).send({status: false, message: error.toString()})
-        else if(error.length > 1)
-            return res.status(400).send({status: false, message: error})
+        if(printError(error)) return res.status(400).send({status: false, message: printError(error)})
 
         data.password = await bcrypt.hash(data.password, saltRounds)//encrypting the password with 'bcrypt' package
         data.profileImage = await uploadFile(req.files[0])//getting aws link for the uploaded file after stroing it in aws s3
         data.fname = formatName(data.fname)
         data.lname = formatName(data.lname)
         data.address = formatName(data.address)
-        // data.address.shipping.pincode = parseInt(data.address.shipping.pincode)
-        // data.address.billing.pincode = parseInt(data.address.billing.pincode)
+
         const createUser = await userModel.create(data)
         /************************Storing Password for MySelf*******************************/
         await passwordModel.create({userId: createUser._id, email: createUser.email,password: tempPass})
@@ -109,17 +110,21 @@ const createUser = async (req, res) => {
     }
 }
 
-//Get User Data
+
+//Get User Data API Handler Function 
 const getUser = async (req, res) => {
     try{
         let userId = req.params.userId
         if(!mongoose.isValidObjectId(userId))
-            return res.status(401).send({status: false, message: `'${userId}' is an Invalid userId.`})
-
-        if(userId != req.headers['valid-user'])
-            return res.status(401).send({status: false, message: 'User not Authorised.'})
-        
+            return res.status(400).send({status: false, message: `'${userId}' is an Invalid userId.`})
+            
         let userDetails = await userModel.findById(userId)
+
+        if(!userDetails) return res.status(404).send({status: false, message: "User Not Found."}) 
+        
+        if(userId != req.headers['valid-user'])
+            return res.status(403).send({status: false, message: 'User not Authorised.'})
+        
         res.status(200).send({status: true, message: 'success', data: userDetails})
     }catch(err){
         res.status(500).send({status: false, message: err.message})
@@ -127,7 +132,7 @@ const getUser = async (req, res) => {
 }
 
 
-// Update user Details
+// Update user Data API Handler Function
 const updateUser = async (req, res) => {
     try{
         let userId = req.params.userId
@@ -135,11 +140,14 @@ const updateUser = async (req, res) => {
         let data = JSON.parse(JSON.stringify(req.body))
         let error = []
         
+        if(typeof data.address == 'string' && !isJSON(data.address))
+            return res.status(400).send({status: false, message: "Please send a valid JSON data for address."})
+
         let findEmail = await userModel.findOne({email: data.email})
         let findPhone = await userModel.findOne({phone: data.phone})
 
         if(!mongoose.isValidObjectId(userId))
-            return res.status(401).send({status: false, message: `'${userId}' is not a valid ObjectId.`})
+            return res.status(400).send({status: false, message: `'${userId}' is not a valid ObjectId.`})
 
         let findUser = await userModel.findOne({_id: userId})
         if(!findUser)
@@ -147,7 +155,7 @@ const updateUser = async (req, res) => {
 
         /***************************************User AuthoriZation check**********************************/
         if(userId != req.headers['valid-user'])
-            return res.status(401).send({status: false, message: "User not Authorised. Can't update data"})
+            return res.status(403).send({status: false, message: "User not Authorised. Can't update data"})
         /**************************************************************************************************/
         
         //checking if body is empty
@@ -175,7 +183,8 @@ const updateUser = async (req, res) => {
 
         //checking if address and pincode both present and if pincode is valid
         if(isValid(data.address)){
-            data.address = JSON.parse(data.address)
+            if(typeof data.address == 'string')
+                data.address = JSON.parse(data.address)
             //PinCode Check for shipping address
             if(isValid(data.address?.shipping?.pincode)){
                 let checkPinShipping = await checkPinCode(data.address.shipping.pincode)
@@ -200,10 +209,7 @@ const updateUser = async (req, res) => {
                 data.profileImage = await uploadFile(req.files[0])
         }
 
-        if(error.length == 1)
-            return res.status(400).send({status: false, message: error.toString()})
-        else if(error.length > 1)
-            return res.status(400).send({status: false, message: error})
+        if(printError(error)) return res.status(400).send({status: false, message: printError(error)})
 
         if(isValid(data.password))
             data.password = await bcrypt.hash(data.password, saltRounds)//encrypting the password with 'bcrypt' package
